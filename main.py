@@ -76,7 +76,7 @@ class Simulator():
     def __init__(self, screen, w, l):
         self.screen = screen
         self.start = [40, 100, 0]
-        self.end = [600, 400, 10]
+        self.end = [560, 400, 120]
         self.w = w
         self.l = l
 
@@ -211,13 +211,16 @@ class Simulator():
 
         for k in range(depth):
             adjacencyMatrix.append([])
-            robot.rotate(a)
+            robot.rotate(angle)
+            # robot.printLocation()
             for c in range(cols):
                 adjacencyMatrix[k].append([])
                 for r in range(rows):
                     if isValid(robot, self.obstacles):
                         adjacencyMatrix[k][c].append([r * shift, c * shift, a, False])
                     else:
+                        if(k == 2 and c == 20 and r == 30):
+                            robot.printLocation()
                         adjacencyMatrix[k][c].append([r * shift, c * shift, a, True])
                     robot.move(shift, 0)
                 robot.move(-(shift * rows), shift)
@@ -225,6 +228,15 @@ class Simulator():
             a+=angle
 
         self.adjacencyMatrix = adjacencyMatrix
+        print(adjacencyMatrix[1][20][30])
+        print(adjacencyMatrix[2][20][30])
+        print(adjacencyMatrix[3][20][30])
+        print(adjacencyMatrix[4][20][30])
+        print(adjacencyMatrix[5][20][30])
+        print(adjacencyMatrix[6][20][30])
+
+
+
         self.path = self.bfsPathFind(shift, angle)
 
     def bfsPathFind(self, shift, angle):
@@ -243,10 +255,7 @@ class Simulator():
             x, y, z, v = node_val
             if(node_val[0:3] == self.end):
                 return path
-            for d in dirs:
-                a = d[0]
-                b = d[1]
-                c = d[2]
+            for a, b, c in dirs:
                 if(z + a * angle >= 0 and z + a * angle < 360
                 and y + b * shift >= 0 and y + b * shift < self.l
                 and x + c * shift >= 0 and x + c * shift < self.w and not
@@ -282,6 +291,6 @@ def main():
     pygame.display.set_caption("Robot Simulation")
     screen = pygame.display.set_mode((640, 480))
     simulation = Simulator(screen, 640, 480)
-    simulation.create_graph(5, 5)
+    simulation.create_graph(10, 10)
     simulation.main()
 main()
