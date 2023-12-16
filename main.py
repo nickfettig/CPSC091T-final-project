@@ -76,15 +76,18 @@ class Simulator():
     def __init__(self, screen, w, l):
         self.screen = screen
         self.start = [40, 100, 0]
-        self.end = [600, 400, 45]
+        self.end = [600, 400, 10]
         self.w = w
         self.l = l
+
+        # ALL POINTS MUST BE IN CCW ORDER FOR MINKOWSKI SUM TO
+        # WORK IN O(n + m) TIME
         self.robot = Robot(self.start[0:2], \
             [[20, 50], [20, 150], [60, 150], [60, 50]], screen)
         self.obstacles = [
             Obstacle([[300, 100], [300, 400], [400, 100]], screen),
-            Obstacle([[0, 300], [200, 300], [200, 375], [0, 375]], screen),
-            Obstacle([[600, 200], [600, 300], [450, 300]], screen)
+            Obstacle([[0, 300], [0, 375], [200, 375], [200, 300]], screen),
+            Obstacle([[450, 300], [600, 300], [600, 200]], screen)
         ]
         self.adjacencyMatrix = []
 
@@ -137,38 +140,83 @@ class Simulator():
 
             return True
         
-        def isValid(p):
-            # checks if a point is in the obstacles
-            for obs in self.obstacles:
-                if(inside_convex_polygon(p, obs.getPoints())):
+        def isValid(robot, obstacles):
+            # err check to reduce invalid boundaries
+            for pt in robot.getPoints():
+                if pt[0] < 0 or pt[1] < 0 or pt[0] > self.w or pt[1] > self.l: 
                     return False
+            return minkowskiSum(robot.getPoints().copy(), obstacles)
 
-            return True
+            # checks if a point is in the obstacles
+            # p = robot.getCenter()
+            # for obs in obstacles:
+            #     if(inside_convex_polygon(p, obs.getPoints())):
+            #         return False
+            # return True
+
+        def minkowskiSum(P, Q_list):
+            def reorder_pts(poly):
+                i_smallest = 0
+                for i in range(1, len(poly)):
+                    if(poly[i][1] < poly[i_smallest][1] or \
+                        (poly[i][1] == poly[i_smallest][1] and poly[i][0] < poly[i_smallest][0])):
+                        i_smallest = i
+                return poly[i_smallest:] + poly[:i_smallest]
+
+            P = reorder_pts(P)
+            P.append(P[0])
+            P.append(P[1])
+            for Q in Q_list:
+                Q = Q.getPoints().copy()
+                for q in range(len(Q)):
+                    Q[q] = [-Q[q][0], -Q[q][1]]
+                Q = reorder_pts(Q)
+                Q.append(Q[0])
+                Q.append(Q[1])
+
+                i = j = 0
+                ms = []
+                while(i < (len(P) - 2) or j < (len(Q) - 2)):
+                    # print([P[i][0] + Q[j][0], P[i][1] + Q[j][1]])
+                    ms.append([P[i][0] + Q[j][0], P[i][1] + Q[j][1]])
+
+                    P_seg = [P[i+1][0] - P[i][0], P[i+1][1] - P[i][1]]
+                    Q_seg = [Q[j+1][0] - Q[j][0], Q[j+1][1] - Q[j][1]]
+                    cross = P_seg[0] * Q_seg[1] - P_seg[1] * Q_seg[0]
+                    if(cross >= 0.0):
+                        j+=1
+                    if(cross <= 0.0):
+                        i+=1
+
+                if(inside_convex_polygon([0,0], ms)):
+                    return False
+            return True    
+        
 
         robot_pts = self.robot.getPoints().copy()
         robot_center = self.robot.getCenter().copy()
         robot = Robot(robot_center, robot_pts, self.screen)
         robot.move(-(robot.getCenter()[0]), -(robot.getCenter()[1]))
 
+        obsArr = []
+        for obs in self.obstacles:
+            obsArr.append(obs.getPoints())
+
         a = 0 # current angle
-        pos_id = 1 # an id for each cell of the matrix
         cols = math.ceil(self.l / shift)
         rows = math.ceil(self.w / shift)
-        depth = 360 // angle
+        depth = math.ceil(360 / angle)
         adjacencyMatrix = []
+        
 
         for k in range(depth):
             adjacencyMatrix.append([])
-
-            # for each angle ... 
             robot.rotate(a)
             for c in range(cols):
                 adjacencyMatrix[k].append([])
                 for r in range(rows):
-                    print(robot.getCenter())
-                    if isValid(robot.getCenter()):
+                    if isValid(robot, self.obstacles):
                         adjacencyMatrix[k][c].append([r * shift, c * shift, a, False])
-                        pos_id += 1
                     else:
                         adjacencyMatrix[k][c].append([r * shift, c * shift, a, True])
                     robot.move(shift, 0)
@@ -178,8 +226,6 @@ class Simulator():
 
         self.adjacencyMatrix = adjacencyMatrix
         self.path = self.bfsPathFind(shift, angle)
-
-        # print(adjacencyMatrix)
 
     def bfsPathFind(self, shift, angle):
         adjacencyMatrix = self.adjacencyMatrix.copy()
@@ -220,8 +266,8 @@ class Simulator():
         for x_i, y_i, z_i in self.path:
             time.sleep(0.1)
             x, y, a, v = self.adjacencyMatrix[x_i][y_i][z_i]
-            print(self.adjacencyMatrix[x_i][y_i][z_i])
-            print(x - x_p, y - y_p, a-a_p)
+            # print(self.adjacencyMatrix[x_i][y_i][z_i])
+            # print(x - x_p, y - y_p, a-a_p)
             self.robot.move(x - x_p, y - y_p)
             self.robot.rotate(a - a_p)
             self.screen.fill((255, 255, 255))
@@ -236,6 +282,6 @@ def main():
     pygame.display.set_caption("Robot Simulation")
     screen = pygame.display.set_mode((640, 480))
     simulation = Simulator(screen, 640, 480)
-    simulation.create_graph(10, 45)
+    simulation.create_graph(5, 5)
     simulation.main()
 main()
