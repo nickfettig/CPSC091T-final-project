@@ -430,6 +430,7 @@ def main():
     pygame.display.set_caption("Robot Simulation Part 1")
     screen = pygame.display.set_mode((640, 480)) #width, length
     simulation = Simulator(screen, 640, 480) #width, length
+    print("Loading Path...")
     simulation.create_graph(5, 2) #shift, angle
     simulation.main()
 main()
