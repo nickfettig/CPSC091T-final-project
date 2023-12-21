@@ -28,7 +28,6 @@ class Obstacle():
     
     def draw(self):
         pygame.draw.polygon(self.surface, "red", self.points)
-        pygame.display.flip()
 
     def getPoints(self):
         return self.points
@@ -68,7 +67,6 @@ class Robot():
         """ Draws robot to screen """
         pygame.draw.polygon(self.surface, "black", self.points)
         pygame.draw.circle(self.surface, "red", self.center, 3)
-        pygame.display.flip()
     
     def printLocation(self):
         """ Prints robot information """
@@ -146,6 +144,7 @@ class Simulator():
         pygame.draw.circle(self.screen, "blue", self.start[0:2], 3)
         pygame.draw.circle(self.screen, "blue", self.end[0:2], 3)
         self.robot.draw()
+        pygame.display.update()
     
     def create_graph(self, shift, angle):
         """ 
@@ -171,15 +170,6 @@ class Simulator():
         
         Total: O(d*c*r*(n+m)) which is optimal when discretizing 
         """
-
-        def addBufferZone():
-            """
-            TODO:
-            * modify Minkowski Sum function and implmenetation
-            * Implement add buffer zone (this might be tough)
-            
-            """
-            pass
         
         def inside_convex_polygon(p, v):
             """
@@ -432,7 +422,7 @@ def main():
     screen = pygame.display.set_mode((640, 480)) #width, length
     simulation = Simulator(screen, 640, 480) #width, length
     print("Loading Path...")
-    simulation.create_graph(5, 5) #shift, angle
+    simulation.create_graph(10, 5) #shift, angle
     print("Path loaded.")
     simulation.main()
 main()
