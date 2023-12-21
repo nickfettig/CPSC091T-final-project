@@ -18,6 +18,7 @@ import pygame
 import numpy as np
 import math
 import time
+from shapely.geometry import LineString
 
 class Obstacle():
     """ Defines the obstacle positions """
@@ -203,7 +204,7 @@ class Simulator():
                 [self.pr_size*3, self.pr_size*3],
                 [self.pr_size*3, -self.pr_size*3]]
 
-            ms = minkowskiSum(pts, pr_square)
+            ms = self.minkowskiSum(pts, pr_square)
             self.buffer = ms.copy()
 
             return ms
@@ -266,7 +267,7 @@ class Simulator():
                 obs = obsObj.getPoints().copy()
                 for i in range(len(obs)):
                     obs[i] = [-obs[i][0], -obs[i][1]]
-                ms = minkowskiSum(robot.getPoints().copy(), obs)
+                ms = self.minkowskiSum(robot.getPoints().copy(), obs)
                 if(inside_convex_polygon([0,0], ms)):
                     return False
             
@@ -285,55 +286,6 @@ class Simulator():
             return True
 
             """
-
-        def minkowskiSum(P, Q):
-            """
-            P: Robot polygon vertices
-            Q: Obstacle polygon vertices
-
-            Calculates the vertices of the Minkowski Sum (ms) using an iterative
-            method that "cycles" around both shapes using pointers incrementing the 
-            pointer with the smaller cumulative polar angle (as used in class). Each cycle
-            we add the sum of the vectors at each pointer.
-
-            Method takes O(|P| + |Q|) as each value is visited only once. 
-            """
-            def reorder_pts(poly):
-                """Rotates vertices in polygon array with the bottom-left-most
-                value as the first entry. Maintains CCW nature. """
-                i_smallest = 0
-                for i in range(1, len(poly)):
-                    if(poly[i][1] < poly[i_smallest][1] or \
-                        (poly[i][1] == poly[i_smallest][1] and poly[i][0] < poly[i_smallest][0])):
-                        i_smallest = i
-                return poly[i_smallest:] + poly[:i_smallest]
-
-            # preprocessing 
-            P = reorder_pts(P)
-            Q = reorder_pts(Q)
-            P.append(P[0])
-            P.append(P[1])
-            Q.append(Q[0])
-            Q.append(Q[1])
-
-            # initialize loop variables 
-            i = j = 0
-            ms = []
-            while(i < (len(P) - 2) or j < (len(Q) - 2)):
-                # add to minkowski sum 
-                ms.append([P[i][0] + Q[j][0], P[i][1] + Q[j][1]])
-
-                # calculate segments to compare polar angles 
-                P_seg = [P[i+1][0] - P[i][0], P[i+1][1] - P[i][1]]
-                Q_seg = [Q[j+1][0] - Q[j][0], Q[j+1][1] - Q[j][1]]
-                # cross product 
-                cross = P_seg[0] * Q_seg[1] - P_seg[1] * Q_seg[0]
-                if(cross >= 0.0):
-                    j+=1
-                if(cross <= 0.0):
-                    i+=1
-
-            return ms
         
         # pre processing: make a new robot to move around 
         robot_pts = self.robot.getPoints().copy()
@@ -442,24 +394,216 @@ class Simulator():
         x_p, y_p, a_p = self.start
         bufferRobot = Robot(self.robot.getCenter().copy(),
         self.buffer.copy(), self.screen)
+        curr_dir = None
 
-        for x_i, y_i, z_i in self.path:
+        path = self.path.copy()
+        path.pop(0) # clear first value
+        task = None
+        
+        while(path):
+            if(task != "reposition"):
+                x_i, y_i, z_i = path.pop(0)
+
+            print(x_i, y_i, z_i)
+            print(curr_dir)
             time.sleep(self.shift*0.01)
             x, y, a, v = self.adjacencyMatrix[x_i][y_i][z_i]
 
-            # move robot along path and redraw all points
-            self.robot.move(x - x_p, y - y_p)
-            self.robot.rotate(a - a_p)
-            bufferRobot.move(x - x_p, y - y_p)
-            bufferRobot.rotate(a - a_p)
-            self.screen.fill((255, 255, 255))
-            bufferRobot.drawBuffer()
-            self.draw_all()
-            # set previous to current values
-            x_p = x
-            y_p = y
-            a_p = a
+            # DETERMINE TASK
+            if(a != a_p):
+                task = "rotate"
+                print("rotate")
+                self.robot.rotate(a - a_p)
+                bufferRobot.rotate(a - a_p)
+                a_p = a
+            elif(x_p != x and curr_dir == "x"):
+                task = "push"
+                print("push")
+                self.robot.move(x - x_p, y - y_p)
+                bufferRobot.move(x - x_p, y - y_p)
+                x_p = x
+            elif(y_p != y and curr_dir == "y"):
+                task = "push"
+                print("push")
+                self.robot.move(x - x_p, y - y_p)
+                bufferRobot.move(x - x_p, y - y_p)
+                y_p = y
+            else:
+                task = "reposition"
+                print("reposition")
+                if(x_p != x):
+                    curr_dir = "x"
+                else:
+                    curr_dir = "y"
 
+            # move robot along path and redraw all points
+            self.screen.fill((255, 255, 255))
+
+            # obstacles and polygons
+            bufferRobot.drawBuffer()
+
+            # construct repositioning path TODO: testing
+            self.constructRepositioningPath(1, 2, self.robot.getPoints().copy())
+
+            #TODO: TESTING STABLIZER
+            stablizer = Stablizer(self.robot.getCenter().copy(), self.robot.getPoints().copy(), \
+            self.buffer.copy(), [0,0], self.pr_size, self.screen)
+            
+            self.draw_all()
+
+    def minkowskiSum(self, P, Q):
+        """
+        P: Robot polygon vertices
+        Q: Obstacle polygon vertices
+
+        Calculates the vertices of the Minkowski Sum (ms) using an iterative
+        method that "cycles" around both shapes using pointers incrementing the 
+        pointer with the smaller cumulative polar angle (as used in class). Each cycle
+        we add the sum of the vectors at each pointer.
+
+        Method takes O(|P| + |Q|) as each value is visited only once. 
+        """
+        def reorder_pts(poly):
+            """Rotates vertices in polygon array with the bottom-left-most
+            value as the first entry. Maintains CCW nature. """
+            i_smallest = 0
+            for i in range(1, len(poly)):
+                if(poly[i][1] < poly[i_smallest][1] or \
+                    (poly[i][1] == poly[i_smallest][1] and poly[i][0] < poly[i_smallest][0])):
+                    i_smallest = i
+            return poly[i_smallest:] + poly[:i_smallest]
+
+        # preprocessing 
+        P = reorder_pts(P)
+        Q = reorder_pts(Q)
+        P.append(P[0])
+        P.append(P[1])
+        Q.append(Q[0])
+        Q.append(Q[1])
+
+        # initialize loop variables 
+        i = j = 0
+        ms = []
+        while(i < (len(P) - 2) or j < (len(Q) - 2)):
+            # add to minkowski sum 
+            ms.append([P[i][0] + Q[j][0], P[i][1] + Q[j][1]])
+
+            # calculate segments to compare polar angles 
+            P_seg = [P[i+1][0] - P[i][0], P[i+1][1] - P[i][1]]
+            Q_seg = [Q[j+1][0] - Q[j][0], Q[j+1][1] - Q[j][1]]
+            # cross product 
+            cross = P_seg[0] * Q_seg[1] - P_seg[1] * Q_seg[0]
+            if(cross >= 0.0):
+                j+=1
+            if(cross <= 0.0):
+                i+=1
+
+        return ms
+
+    def constructRepositioningPath(self, p1, p2, M):
+
+        path_endpoint_box = [[-self.pr_size*1.5, -self.pr_size*1.5],
+            [-self.pr_size*1.5, self.pr_size*1.5],
+            [self.pr_size*1.5, self.pr_size*1.5],
+            [self.pr_size*1.5, -self.pr_size*1.5]]
+
+        path_endpoints = self.minkowskiSum(M, path_endpoint_box)
+
+        n = len(path_endpoints)
+        for i in range(n):
+            pygame.draw.line(self.screen, "blue", \
+                path_endpoints[i], path_endpoints[(i+1)%n], 1)
+
+
+class Stablizer():
+        def __init__(self, C, M, M_p, N, pr_size, screen):
+            # won't change
+            self.surface = screen
+            self.pr_size = pr_size
+
+            # intially stabilize to instatiate variables
+            self.restablize(C, M, M_p, N)
+
+        def restablize(self, C, M, M_p, N):
+            def line(p1, p2):
+                A = (p1[1] - p2[1])
+                B = (p2[0] - p1[0])
+                C = (p1[0]*p2[1] - p2[0]*p1[1])
+                return A, B, -C
+
+            """ https://stackoverflow.com/questions/3838329/how-can-i-check-if-two-segments-intersect """
+            def intersection(LS1, LS2):
+                if(not LineString(LS1).intersects(LineString(LS2))):
+                    return -1
+                L1 = line(LS1[0], LS1[1])
+                L2 = line(LS2[0], LS2[1])
+                D  = L1[0] * L2[1] - L1[1] * L2[0]
+                Dx = L1[2] * L2[1] - L1[1] * L2[2]
+                Dy = L1[0] * L2[2] - L1[2] * L2[0]
+                if D != 0:
+                    x = Dx / D
+                    y = Dy / D
+                    return x,y
+                else:
+                    return -1
+
+            def find_edge_target_point(edge, C):
+                dir_perp_edge = [-(edge[1][1] - edge[0][1]), (edge[1][0] - edge[0][0])]
+                perp_edge_norm = np.linalg.norm(dir_perp_edge)
+                perp_edge = [C, [C[0] + dir_perp_edge[0] * 2 * self.S_r / perp_edge_norm, \
+                    C[1] + dir_perp_edge[1] * 2 * self.S_r / perp_edge_norm]]
+                intersection_pt = intersection(edge, perp_edge)
+
+                # find associated target rest point
+                rest_pt = [intersection_pt[0] + dir_perp_edge[0] * 2.5 * self.pr_size / perp_edge_norm, \
+                    intersection_pt[1] + dir_perp_edge[1] * 2.5 * self.pr_size / perp_edge_norm]
+
+                return edge, intersection_pt, rest_pt
+
+            S_r = 0
+            for pt in M:
+                self.S_r = S_r = max(S_r, math.sqrt((C[0]-pt[0])**2 + (C[1]-pt[1])**2))
+            dir_L2 = [C[0] - N[0], C[1] - N[1]]
+            # extend L2 by 2 * S_r to ensure rays go through boundary of M
+            L2_norm = np.linalg.norm(dir_L2)
+            L2 = [dir_L2[0] * 2 * S_r / L2_norm, dir_L2[1] * 2 * S_r / L2_norm]
+
+            dir_L3 = [-dir_L2[1], dir_L2[0]]
+            L3_norm = np.linalg.norm(dir_L3)
+            L3 = [dir_L3[0] * 2 * S_r / L3_norm, dir_L3[1] * 2 * S_r / L3_norm]
+
+            # convert to rays centered at C
+            L1 = self.L1 = [C, [C[0] - L2[0], C[1] - L2[1]]]
+            L2 = self.L2 = [C, [C[0] + L2[0], C[1] + L2[1]]]
+            L4 = self.L4 = [C, [C[0] - L3[0], C[1] - L3[1]]]
+            L3 = self.L3 = [C, [C[0] + L3[0], C[1] + L3[1]]]
+
+            # pygame.draw.line(self.surface, "green", \
+            #     L2[0], L2[1], 1)
+
+            for i in range(len(M)):
+                edge = [M[i], M[(i+1)%len(M)]]
+                if(intersection(L2, edge) != -1):
+                    e2, pu, pr = find_edge_target_point(edge, C)
+                    self.e2 = e2
+                    self.pu = pu
+                    self.pr = pr
+                if(intersection(L3, edge) != -1):
+                    e3, la, lar = find_edge_target_point(edge, C)
+                    self.e3 = e3
+                    self.la = la
+                    self.lar = lar
+
+                    # TODO: FIX THESE: POTENTIALLY NOT CORRECT
+                    r0 = self.r0 = e3[0]
+                    l0 = self.l0 = e3[1]
+                if(intersection(L4, edge) != -1):
+                    e4, ra, rar = find_edge_target_point(edge, C)
+                    self.e4 = e4
+                    self.ra = ra
+                    self.rar = rar
+                
+            #TODO: ADD ROTATION TARGET REST / BALANCE POINTS HERE
 
 def main():
     # initiate simulator and run it 
@@ -467,8 +611,9 @@ def main():
     pygame.display.set_caption("Robot Simulation Part 2")
     screen = pygame.display.set_mode((640, 480)) #width, length
     simulation = Simulator(screen, 640, 480) #width, length
-    simulation.initialize_pushers(2, 8) #amount, size
+    simulation.initialize_pushers(3, 6) #amount, size (diameter)
     print("Loading Path...")
-    simulation.create_graph(5, 2) #shift, angle
+    simulation.create_graph(10, 5) #shift, angle
+    print("Path loaded.")
     simulation.main()
 main()

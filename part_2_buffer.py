@@ -469,6 +469,6 @@ def main():
     simulation = Simulator(screen, 640, 480) #width, length
     simulation.initialize_pushers(2, 8) #amount, size
     print("Loading Path...")
-    simulation.create_graph(5, 2) #shift, angle
+    simulation.create_graph(10, 10) #shift, angle
     simulation.main()
 main()

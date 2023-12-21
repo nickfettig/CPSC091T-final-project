@@ -409,7 +409,9 @@ class Simulator():
         
         # set start point to previous values 
         x_p, y_p, a_p = self.start
-        for x_i, y_i, z_i in self.path:
+        path = self.path.copy()
+        path.pop(0)
+        for x_i, y_i, z_i in path:
             time.sleep(self.shift*0.01)
             x, y, a, v = self.adjacencyMatrix[x_i][y_i][z_i]
 
@@ -423,7 +425,6 @@ class Simulator():
             y_p = y
             a_p = a
 
-
 def main():
     # initiate simulator and run it 
     pygame.init()
@@ -431,6 +432,7 @@ def main():
     screen = pygame.display.set_mode((640, 480)) #width, length
     simulation = Simulator(screen, 640, 480) #width, length
     print("Loading Path...")
-    simulation.create_graph(5, 2) #shift, angle
+    simulation.create_graph(5, 5) #shift, angle
+    print("Path loaded.")
     simulation.main()
 main()
