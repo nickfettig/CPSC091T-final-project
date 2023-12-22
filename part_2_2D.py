@@ -20,6 +20,29 @@ import math
 import time
 from shapely.geometry import LineString
 
+
+def line(p1, p2):
+    A = (p1[1] - p2[1])
+    B = (p2[0] - p1[0])
+    C = (p1[0]*p2[1] - p2[0]*p1[1])
+    return A, B, -C
+
+""" https://stackoverflow.com/questions/3838329/how-can-i-check-if-two-segments-intersect """
+def intersection(LS1, LS2):
+    if(not LineString(LS1).intersects(LineString(LS2))):
+        return -1
+    L1 = line(LS1[0], LS1[1])
+    L2 = line(LS2[0], LS2[1])
+    D  = L1[0] * L2[1] - L1[1] * L2[0]
+    Dx = L1[2] * L2[1] - L1[1] * L2[2]
+    Dy = L1[0] * L2[2] - L1[2] * L2[0]
+    if D != 0:
+        x = Dx / D
+        y = Dy / D
+        return x,y
+    else:
+        return -1
+
 class Obstacle():
     """ Defines the obstacle positions """
 
@@ -121,6 +144,15 @@ class Simulator():
         clock = pygame.time.Clock()
         self.screen.fill((255, 255, 255))
 
+        self.bufferObject = Object(self.object.getCenter().copy(),
+        self.buffer.copy(), self.screen)
+        self.bufferObject.drawBuffer()
+
+        self.robots = []
+        for i in range(self.pr_amount):
+            self.robots.append(Robot(self.pr_size, [40 * (i+1), self.l-50], self.screen))
+            self.robots[i].draw()
+
         self.draw_all()
         while 1:
             clock.tick(100)
@@ -133,6 +165,7 @@ class Simulator():
                 elif event.type == pygame.KEYDOWN:
                     # resets robot and traverses path 
                     self.object.reset()
+                    self.bufferObject.reset()
                     self.traversePath()
 
             self.draw_all()
@@ -360,8 +393,8 @@ class Simulator():
 
         def updateMapping():
             self.screen.fill((255, 255, 255))
-            buffer.drawBuffer()        
-            for i in robots:
+            self.bufferObject.drawBuffer()        
+            for i in self.robots:
                 i.draw()
             self.draw_all()
 
@@ -389,7 +422,11 @@ class Simulator():
                 p2[1] - path_endpoints[idx_p2][1]])):
                     idx_p2 = i
 
-            if(idx_p1 < idx_p2):
+            if(abs(idx_p1 - idx_p2) == 1 or \
+                ((idx_p1 + 1)%n == 0 and idx_p2 == 0) or
+                ((idx_p2 + 1)%n == 0 and idx_p1 == 0)):
+                path_lst = []
+            elif(idx_p1 < idx_p2):
                 path_lst = path_endpoints[idx_p1:(idx_p2+1)]
             elif(idx_p1 > idx_p2):
                 path_lst = (path_endpoints[idx_p2:(idx_p1+1)])
@@ -400,30 +437,78 @@ class Simulator():
             path = [p1] + path_lst + [p2]
             return path
 
-        def moveRobot(usingRobot, repo_path):
+        def moveRobot(usingRobot, repo_path, n):
             for repo_pt in repo_path:
-                n = 10
                 vec = [(repo_pt[0] - usingRobot.position[0])/n, (repo_pt[1] - usingRobot.position[1])/n]
                 for i in range(n):
                     time.sleep(0.01)
                     usingRobot.move(vec[0], vec[1], label)
                     updateMapping()
 
+        def useVisibilityGraph(p1, p2):
+            obs_box = [[-self.pr_size*0.5, -self.pr_size*0.5],
+                [-self.pr_size*0.5, self.pr_size*0.5],
+                [self.pr_size*0.5, self.pr_size*0.5],
+                [self.pr_size*0.5, -self.pr_size*0.5]]
+            
+            nodes = {
+                tuple(p1): [],
+                tuple(p2): []
+            }
+
+            for obs in self.obstacles:
+                obs_endpoints = self.minkowskiSum(obs.getPoints().copy(), obs_box)
+                for ep in obs_endpoints:
+                    if ep[0] > 0 and ep[0] < self.w and \
+                    ep[1] > 0 and ep[1] < self.l:
+                        nodes[tuple(ep)] = []
+
+            for n1 in list(nodes.keys()):
+                for n2 in list(nodes.keys()):
+                    if(n1 == n2):
+                        continue
+
+                    inter = False
+                    for o in self.obstacles:
+                        obs = o.getPoints()
+                        for i in range(len(obs)):
+                            edge = [obs[i], obs[(i+1)%len(obs)]]
+                            if(intersection([n1, n2], edge) != -1):
+                                inter = True
+                    if not inter:
+                        if(n2 not in nodes[n1]):
+                            nodes[n1].append(n2)
+                        if(n1 not in nodes[n2]):
+                            nodes[n2].append(n1)
+
+            seen = [p1]
+            queue = [[p1]]
+            while(queue):
+                path = queue.pop(0)
+                if path[-1] == tuple(p2):
+                    return [p1] + path
+
+                for i in nodes[tuple(path[-1])]:
+                    if (i not in seen):
+                        seen.append(i)
+                        newpath = path.copy()
+                        newpath.append(i)
+                        queue.append(newpath)
+
+            return p1
+
+
         if(self.path == -1):
             print("No path found")
             return
-        
-        buffer = Object(self.object.getCenter().copy(),
-        self.buffer.copy(), self.screen)
 
         stablizer = Stablizer(self.pr_size, self.screen)
 
-        robots = []
-        for i in range(self.pr_amount):
-            robots.append(Robot(self.pr_size, [0, 0], self.screen))
+        dangerousRobot = None
 
         path = self.path.copy()
         path.pop(0)
+
         for x_i, y_i in path:
             # time.sleep(self.shift*0.01)
             x, y, v = self.adjacencyMatrix[x_i][y_i]
@@ -433,31 +518,55 @@ class Simulator():
             # move robot along path and redraw all points
 
             takenRobot = ""
+            displacement = [0, 0]
             for pt, label, contactPoint, restPoint in stablizer_path:
+
+                contact = [contactPoint[0] + displacement[0], contactPoint[1] + displacement[1]]
+                rest = [restPoint[0] + displacement[0], restPoint[1] + displacement[1]]
+
                 usingRobot = None
-                for robot in robots:
+                for robot in self.robots:
                     if robot.label == label:
                         usingRobot = robot
                         break
                     if (self.pr_amount == 1 or robot.label != takenRobot) and \
-                        (usingRobot == None or np.linalg.norm([robot.position[0] - contactPoint[0], \
-                        robot.position[1] - contactPoint[1]]) < \
-                        np.linalg.norm([usingRobot.position[0] - contactPoint[0], \
-                        usingRobot.position[1] - contactPoint[1]])):
+                        (usingRobot == None or np.linalg.norm([robot.position[0] - contact[0], \
+                        robot.position[1] - contact[1]]) < \
+                        np.linalg.norm([usingRobot.position[0] - contact[0], \
+                        usingRobot.position[1] - contact[1]])):
                         usingRobot = robot
+
+                if(abs(pt[0]) < 0.001 and abs(pt[1]) < 0.001):
+                    dangerousRobot = usingRobot
+                    continue
 
                 takenRobot = label
 
-                repo_path = constructRepositioningPath(usingRobot.position, contactPoint, self.object.getPoints().copy())
-                moveRobot(usingRobot, repo_path)
+                if(usingRobot.label == None or usingRobot == dangerousRobot):
+                    path_to_robot = useVisibilityGraph(usingRobot.position, self.object.getCenter().copy())
+                    rest_of_path = constructRepositioningPath(path_to_robot[-2], contact, self.object.getPoints().copy())
+                    repo_path = path_to_robot[:-2] + rest_of_path
+                    dangerousRobot = None
+                else:
+                    repo_path = constructRepositioningPath(usingRobot.position, contact, self.object.getPoints().copy())
+                
+                if(len(repo_path) > 2):
+                    n = 50
+                else:
+                    n = 4
 
-                time.sleep(0.02)
+                moveRobot(usingRobot, repo_path, n)
+
+                time.sleep(0.01)
 
                 self.object.move(pt[0], pt[1])
-                buffer.move(pt[0], pt[1])
+                self.bufferObject.move(pt[0], pt[1])
 
-                repo_path = constructRepositioningPath(usingRobot.position, restPoint, self.object.getPoints().copy())
-                moveRobot(usingRobot, repo_path)
+                displacement[0] += pt[0]
+                displacement[1] += pt[1]
+
+                repo_path = constructRepositioningPath(usingRobot.position, rest, self.object.getPoints().copy())
+                moveRobot(usingRobot, repo_path, 10)
 
                 
 
@@ -517,28 +626,6 @@ class Stablizer():
         self.pr_size = pr_size
 
     def restablize(self, C, M, N):
-        def line(p1, p2):
-            A = (p1[1] - p2[1])
-            B = (p2[0] - p1[0])
-            C = (p1[0]*p2[1] - p2[0]*p1[1])
-            return A, B, -C
-
-        """ https://stackoverflow.com/questions/3838329/how-can-i-check-if-two-segments-intersect """
-        def intersection(LS1, LS2):
-            if(not LineString(LS1).intersects(LineString(LS2))):
-                return -1
-            L1 = line(LS1[0], LS1[1])
-            L2 = line(LS2[0], LS2[1])
-            D  = L1[0] * L2[1] - L1[1] * L2[0]
-            Dx = L1[2] * L2[1] - L1[1] * L2[2]
-            Dy = L1[0] * L2[2] - L1[2] * L2[0]
-            if D != 0:
-                x = Dx / D
-                y = Dy / D
-                return x,y
-            else:
-                return -1
-
         def find_edge_target_point(edge, C):
             dir_perp_edge = [-(edge[1][1] - edge[0][1]), (edge[1][0] - edge[0][0])]
             perp_edge_norm = np.linalg.norm(dir_perp_edge)
@@ -607,6 +694,11 @@ class Stablizer():
         v3 = [N[0] - C[0], N[1] - C[1]]
         robot_steps = np.linalg.solve([[v1_unit[0], v2_unit[0]], [v1_unit[1], v2_unit[1]]], v3)
 
+        if(robot_steps[0] < 0.001):
+            robot_steps[0] = 0
+        if(robot_steps[1] < 0.001):
+            robot_steps[1] = 0
+
         step_list = []
         n = 2 # TODO: CAN BE CHANGED (IMPLEMENT LATER)
         v1_step = [robot_steps[0] * v1_unit[0] / n, robot_steps[0] * v1_unit[1] / n]
@@ -625,17 +717,6 @@ class Robot():
         self.position = p
         self.surface = surface
         self.label = None
-    
-    # def moveToPoint(self, path, label):
-    #     for pt in path:
-    #         n = 20
-    #         vec = [(pt[0] - self.position[0])/n, (pt[1] - self.position[1])/n]
-    #         for i in range(n):
-    #             time.sleep(0.01)
-    #             self.position = [self.position[0] + vec[0], self.position[1] + vec[1]]
-    #             self.draw()
-    #             pygame.display.update()
-    #     self.label = label
 
     def move(self, dx, dy, label):
         self.position[0] += dx
@@ -658,3 +739,13 @@ def main():
     print("Path loaded.")
     simulation.main()
 main()
+
+"""
+Things to do (in priority):
+* make faster?
+* visbility graph by which the pushers can start in bottom left corner
+    -> very important 
+* smooth movement of robot / pushers
+* work for 3+ robots? 
+
+"""
