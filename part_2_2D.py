@@ -11,7 +11,6 @@ DESCRIPTION
 
 pip libs:
 pygame, numpy, shapely
-
 """
 
 import pygame
@@ -20,22 +19,28 @@ import math
 import time
 from shapely.geometry import LineString
 
-
-def line(p1, p2):
-    A = (p1[1] - p2[1])
-    B = (p2[0] - p1[0])
-    C = (p1[0]*p2[1] - p2[0]*p1[1])
-    return A, B, -C
-
-""" https://stackoverflow.com/questions/3838329/how-can-i-check-if-two-segments-intersect """
 def intersection(LS1, LS2):
+    """ 
+        Given two segments, returns the intersection point, or -1 if
+        no intersection was found. Adopted from stack overflow forum: 
+
+        https://stackoverflow.com/questions/3838329/how-can-i-check-if-two-segments-intersect
+    """
+    def line(p1, p2):
+        A = (p1[1] - p2[1])
+        B = (p2[0] - p1[0])
+        C = (p1[0]*p2[1] - p2[0]*p1[1])
+        return A, B, -C
+
     if(not LineString(LS1).intersects(LineString(LS2))):
         return -1
+
     L1 = line(LS1[0], LS1[1])
     L2 = line(LS2[0], LS2[1])
     D  = L1[0] * L2[1] - L1[1] * L2[0]
     Dx = L1[2] * L2[1] - L1[1] * L2[2]
     Dy = L1[0] * L2[2] - L1[2] * L2[0]
+
     if D != 0:
         x = Dx / D
         y = Dy / D
@@ -45,7 +50,6 @@ def intersection(LS1, LS2):
 
 class Obstacle():
     """ Defines the obstacle positions """
-
     def __init__(self, points, screen):
         self.points = points
         self.surface = screen 
@@ -58,7 +62,7 @@ class Obstacle():
 
 class Object():
     """ 
-        Handles robot positioning, movement, and rotation
+        Handles the object positioning and movement
         Note that all operations are local and in-place
     """
     def __init__(self, center, points, screen):
@@ -69,7 +73,7 @@ class Object():
         self.initial_points = points.copy()
 
     def move(self, x, y):
-        """ Will move the robot a set x and y from its current location """
+        """ Will move the object a set x and y from its current location """
         curr_x, curr_y = self.center 
         self.center = [curr_x + x, curr_y + y]
         pt_accum = []
@@ -79,16 +83,16 @@ class Object():
         self.points = pt_accum
 
     def draw(self):
-        """ Draws robot to screen """
+        """ Draws object to screen """
         pygame.draw.polygon(self.surface, "black", self.points)
         pygame.draw.circle(self.surface, "red", self.center, 3)
     
     def drawBuffer(self):
-        """ Draws robot to screen """
+        """ Draws object to screen """
         pygame.draw.polygon(self.surface, "orange", self.points)
     
     def printLocation(self):
-        """ Prints robot information """
+        """ Prints object information """
         print("center: " + str(self.center))
         print("points: " + str(self.points))
 
@@ -143,11 +147,13 @@ class Simulator():
         """ Loads screen and handles traversing using predestined path """
         clock = pygame.time.Clock()
         self.screen.fill((255, 255, 255))
-
+        
+        # intiailize buffer robot for visualization
         self.bufferObject = Object(self.object.getCenter().copy(),
         self.buffer.copy(), self.screen)
         self.bufferObject.drawBuffer()
 
+        # initialize pushing robots used 
         self.robots = []
         for i in range(self.pr_amount):
             self.robots.append(Robot(self.pr_size, [40 * (i+1), self.l-50], self.screen))
@@ -171,7 +177,7 @@ class Simulator():
             self.draw_all()
                     
     def draw_all(self):
-        """ Draws all obstacles, start/finish points, and robot """
+        """ Draws all obstacles, start/finish points and object """
         for obs in self.obstacles:
             obs.draw()
         pygame.draw.circle(self.screen, "blue", self.start, 3)
@@ -185,18 +191,14 @@ class Simulator():
     
     def create_graph(self, shift):
         """ 
-        Given a shift and angle to discretize by, will create a 3D "graph"
-        Graph is really just a 3D array that will be operated upon with BFS.
-        Each "layer" of this array represents a different angle for the robot
-        while the 2D arrays of each layer are a representation of the shifts
-        to each discretized point. 
+        Given a shift to discretize by, will create a 2D "graph" to use 
+        path finding operations on.
 
         Runtime Analysis:
 
         Define...
         cols (c) -> length / shift)
         rows (r) -> width / shift)
-        depth (d) -> 360 / angle
         n -> size of robot
         m -> size of all obstacles 
 
@@ -205,10 +207,14 @@ class Simulator():
                 -> minkowskiSum(): O(n + m)
                 -> inside_convex_polygon: O(n + m)
         
-        Total: O(d*c*r*(n+m)) which is optimal when discretizing 
+        Total: O(d*c*(n+m)) which is optimal when discretizing 
         """
 
         def addBufferZone(pts):
+            """
+            Adds a space equivalent to 3 pushing robots around the object
+            to allow space for them to move. Uses a minkowski sum!
+            """
 
             # check that pushing robot parameters are specified 
             if(self.pr_amount == None or self.pr_size == None):
@@ -287,19 +293,6 @@ class Simulator():
             
             # if made it out of loop, robot is in a valid location! return True
             return True
-
-            """
-            For a point robot, just use inside_convex_polygon() without
-            Minokwski Sum first...
-
-            checks if a point is in the obstacles
-            p = robot.getCenter()
-            for obs in obstacles:
-                if(inside_convex_polygon(p, obs.getPoints())):
-                    return False
-            return True
-
-            """
         
         # pre processing: make a new robot to move around 
         robot_pts = self.object.getPoints().copy()
@@ -337,10 +330,9 @@ class Simulator():
     def bfsPathFind(self, shift):
         """
         Finds a path using the graph (adjacencyMatrix) using a BFS approach.
-        Will find the shortest path (prioritizing rotation first). If no path
-        exists, will return -1.
+        If no path exists, will return -1
         
-        Runtime for path-find queries: O(r*c*d)
+        Runtime for path-find queries: O(c*d)
         """
         
         # create copy (as this array will be edited)
@@ -387,11 +379,13 @@ class Simulator():
 
     def traversePath(self):
         """
-        Traverses a path using self.path. Self.path holds the values, but
-        the robot along this path takes some work. 
+        Will traverse the path while simultaneously assigning tasks to the
+        robots to push the object along. Relies on the visibility graph, repositioning
+        path, and stabilzer to determine pathfinding and push points. 
         """
 
         def updateMapping():
+            """ updates object, buffer, and robots on the screen """
             self.screen.fill((255, 255, 255))
             self.bufferObject.drawBuffer()        
             for i in self.robots:
@@ -399,7 +393,16 @@ class Simulator():
             self.draw_all()
 
         def constructRepositioningPath(p1, p2, M):
+            """
+            Will construct a repositioning path about M to connect p1
+            and p2. Useful for moving positions and push angle on the path. Takes
+            minkowski sum at halfway through the buffer zone to avoid collisions.
 
+            Takes O(m)-time where m is the number of points in M.
+            """
+
+
+            # minkowski sum 
             path_endpoint_box = [[-self.pr_size*1.5, -self.pr_size*1.5],
                 [-self.pr_size*1.5, self.pr_size*1.5],
                 [self.pr_size*1.5, self.pr_size*1.5],
@@ -407,6 +410,7 @@ class Simulator():
 
             path_endpoints = self.minkowskiSum(M, path_endpoint_box)
 
+            # looking for connecting indicies along the path of Minkowski Sum
             n = len(path_endpoints)
             idx_p1 = 0
             idx_p2 = 0
@@ -423,6 +427,7 @@ class Simulator():
                     idx_p2 = i
 
             if(abs(idx_p1 - idx_p2) == 1 or \
+                # avoids long travelling 
                 ((idx_p1 + 1)%n == 0 and idx_p2 == 0) or
                 ((idx_p2 + 1)%n == 0 and idx_p1 == 0)):
                 path_lst = []
@@ -433,11 +438,16 @@ class Simulator():
                 path_lst.reverse()
             else:
                 path_lst = []
-
+            
+            # connect the points with the path list 
             path = [p1] + path_lst + [p2]
             return path
 
         def moveRobot(usingRobot, repo_path, n):
+            """
+            move the robot smoothly along the repositioning path. n determines
+            the number of iterations (higher n = more smooth)
+            """
             for repo_pt in repo_path:
                 vec = [(repo_pt[0] - usingRobot.position[0])/n, (repo_pt[1] - usingRobot.position[1])/n]
                 for i in range(n):
@@ -446,11 +456,22 @@ class Simulator():
                     updateMapping()
 
         def useVisibilityGraph(p1, p2):
+            """
+            Constructs a visibility graph and uses it to connect two points 
+            so robots will avoid collisions with obstacles over long distances.
+            
+            O(n^3) where n is the number of obstacles vertices 
+            (this can be implemented faster!)
+            """
+
+            # minkowski sum to allow space for the robot to move along 
+            # edges of obstacles without colliding
             obs_box = [[-self.pr_size*0.5, -self.pr_size*0.5],
                 [-self.pr_size*0.5, self.pr_size*0.5],
                 [self.pr_size*0.5, self.pr_size*0.5],
                 [self.pr_size*0.5, -self.pr_size*0.5]]
             
+            # graph 
             nodes = {
                 tuple(p1): [],
                 tuple(p2): []
@@ -463,6 +484,7 @@ class Simulator():
                     ep[1] > 0 and ep[1] < self.l:
                         nodes[tuple(ep)] = []
 
+            # construct visbility graph 
             for n1 in list(nodes.keys()):
                 for n2 in list(nodes.keys()):
                     if(n1 == n2):
@@ -481,6 +503,7 @@ class Simulator():
                         if(n1 not in nodes[n2]):
                             nodes[n2].append(n1)
 
+            #bfs to determine a path and return it 
             seen = [p1]
             queue = [[p1]]
             while(queue):
@@ -502,6 +525,7 @@ class Simulator():
             print("No path found")
             return
 
+        # initialize stabilizer 
         stablizer = Stablizer(self.pr_size, self.screen)
 
         dangerousRobot = None
@@ -509,21 +533,24 @@ class Simulator():
         path = self.path.copy()
         path.pop(0)
 
+        # follow the path
         for x_i, y_i in path:
-            # time.sleep(self.shift*0.01)
             x, y, v = self.adjacencyMatrix[x_i][y_i]
 
+            # find target push points (vectors) using the stabilizer 
             stablizer_path = stablizer.restablize(self.object.getCenter().copy(),
             self.object.getPoints().copy(), [x,y])
-            # move robot along path and redraw all points
 
             takenRobot = ""
             displacement = [0, 0]
             for pt, label, contactPoint, restPoint in stablizer_path:
+                # for each "move" on the stabilizer path 
 
+                # account for displacement from robot moving on target points 
                 contact = [contactPoint[0] + displacement[0], contactPoint[1] + displacement[1]]
                 rest = [restPoint[0] + displacement[0], restPoint[1] + displacement[1]]
 
+                # decide which robot to use based on distacne away from target point 
                 usingRobot = None
                 for robot in self.robots:
                     if robot.label == label:
@@ -536,12 +563,14 @@ class Simulator():
                         usingRobot.position[1] - contact[1]])):
                         usingRobot = robot
 
+                # skip robot motion if no motion is done by robot in that turn 
                 if(abs(pt[0]) < 0.001 and abs(pt[1]) < 0.001):
                     dangerousRobot = usingRobot
                     continue
-
+                
+                # determine if "long distance" travel is necessary with visibility graph
+                # dangerousRobots are marked ahead of time 
                 takenRobot = label
-
                 if(usingRobot.label == None or usingRobot == dangerousRobot):
                     path_to_robot = useVisibilityGraph(usingRobot.position, self.object.getCenter().copy())
                     rest_of_path = constructRepositioningPath(path_to_robot[-2], contact, self.object.getPoints().copy())
@@ -550,23 +579,26 @@ class Simulator():
                 else:
                     repo_path = constructRepositioningPath(usingRobot.position, contact, self.object.getPoints().copy())
                 
-                if(len(repo_path) > 2):
-                    n = 50
+                # follow repositioning path and push 
+                if(len(repo_path) > 3):
+                    n = 40
                 else:
                     n = 4
-
                 moveRobot(usingRobot, repo_path, n)
-
-                time.sleep(0.01)
 
                 self.object.move(pt[0], pt[1])
                 self.bufferObject.move(pt[0], pt[1])
 
+                # account for displacement 
                 displacement[0] += pt[0]
                 displacement[1] += pt[1]
 
+                # reposition to get in resting position 
                 repo_path = constructRepositioningPath(usingRobot.position, rest, self.object.getPoints().copy())
                 moveRobot(usingRobot, repo_path, 10)
+
+            for robot in self.robots:
+                robot.label = None
 
                 
 
@@ -621,12 +653,21 @@ class Simulator():
             
 
 class Stablizer():
+    """
+    Determines the points on M for the robot to push as well as 
+    the force (vector) to push with. Very similar to the report referenced
+    in my write up.
+    """
+
     def __init__(self, pr_size, screen):
         self.surface = screen
         self.pr_size = pr_size
 
     def restablize(self, C, M, N):
         def find_edge_target_point(edge, C):
+            """
+            Trig to find the target balance and rest point on a given edge 
+            """
             dir_perp_edge = [-(edge[1][1] - edge[0][1]), (edge[1][0] - edge[0][0])]
             perp_edge_norm = np.linalg.norm(dir_perp_edge)
             perp_edge = [C, [C[0] + dir_perp_edge[0] * 2 * self.S_r / perp_edge_norm, \
@@ -700,7 +741,7 @@ class Stablizer():
             robot_steps[1] = 0
 
         step_list = []
-        n = 2 # TODO: CAN BE CHANGED (IMPLEMENT LATER)
+        n = 2 # TODO: HIGHER N = MORE ACCURATE BUT LONGER (more practical, probably)
         v1_step = [robot_steps[0] * v1_unit[0] / n, robot_steps[0] * v1_unit[1] / n]
         v2_step = [robot_steps[1] * v2_unit[0] / n, robot_steps[1] * v2_unit[1] / n]
         for i in range(n):
@@ -712,6 +753,10 @@ class Stablizer():
 
 
 class Robot():
+    """
+    Robot class. Defined by a position and label which tells the robot 
+    which instructions of the stabilzer to listen to.
+    """
     def __init__(self, size, p, surface):
         self.size = size
         self.position = p
@@ -738,14 +783,5 @@ def main():
     simulation.create_graph(10) #shift
     print("Path loaded.")
     simulation.main()
+
 main()
-
-"""
-Things to do (in priority):
-* make faster?
-* visbility graph by which the pushers can start in bottom left corner
-    -> very important 
-* smooth movement of robot / pushers
-* work for 3+ robots? 
-
-"""

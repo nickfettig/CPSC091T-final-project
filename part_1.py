@@ -338,7 +338,7 @@ class Simulator():
     def bfsPathFind(self, shift, angle):
         """
         Finds a path using the graph (adjacencyMatrix) using a BFS approach.
-        Will find the shortest path (prioritizing rotation first). If no path
+        Will find the shortest path (prioritizing translation first). If no path
         exists, will return -1.
         
         Runtime for path-find queries: O(r*c*d)
