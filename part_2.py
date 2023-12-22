@@ -10,8 +10,7 @@ Rigorous Movement of Convex Polygons on a Path Using Multiple Robots Simulation
 DESCRIPTION
 
 pip libs:
-pygame, numpy
-
+pygame, numpy, shapely
 """
 
 import pygame
@@ -20,63 +19,80 @@ import math
 import time
 from shapely.geometry import LineString
 
+def intersection(LS1, LS2):
+    """ 
+        Given two segments, returns the intersection point, or -1 if
+        no intersection was found. Adopted from stack overflow forum: 
+
+        https://stackoverflow.com/questions/3838329/how-can-i-check-if-two-segments-intersect
+    """
+    def line(p1, p2):
+        A = (p1[1] - p2[1])
+        B = (p2[0] - p1[0])
+        C = (p1[0]*p2[1] - p2[0]*p1[1])
+        return A, B, -C
+
+    if(not LineString(LS1).intersects(LineString(LS2))):
+        return -1
+
+    L1 = line(LS1[0], LS1[1])
+    L2 = line(LS2[0], LS2[1])
+    D  = L1[0] * L2[1] - L1[1] * L2[0]
+    Dx = L1[2] * L2[1] - L1[1] * L2[2]
+    Dy = L1[0] * L2[2] - L1[2] * L2[0]
+
+    if D != 0:
+        x = Dx / D
+        y = Dy / D
+        return x,y
+    else:
+        return -1
+
 class Obstacle():
     """ Defines the obstacle positions """
-
     def __init__(self, points, screen):
         self.points = points
         self.surface = screen 
     
     def draw(self):
         pygame.draw.polygon(self.surface, "red", self.points)
-        pygame.display.flip()
 
     def getPoints(self):
         return self.points
 
-class Robot():
+class Object():
     """ 
-        Handles robot positioning, movement, and rotation
+        Handles the object positioning and movement
         Note that all operations are local and in-place
     """
     def __init__(self, center, points, screen):
         self.center = center
-        self.points = points
+        self.points = points.copy()
         self.surface = screen
         self.initial_center = center
-        self.inital_points = points
+        self.initial_points = points.copy()
 
     def move(self, x, y):
-        """ Will move the robot a set x and y from its current location """
+        """ Will move the object a set x and y from its current location """
         curr_x, curr_y = self.center 
         self.center = [curr_x + x, curr_y + y]
+        pt_accum = []
         for i in range(len(self.points)):
             curr_x, curr_y = self.points[i]
-            self.points[i] = [curr_x + x, curr_y + y]
-
-    def rotate(self, angle):
-        """ Rotates the robot by an angle by reference of its center point"""
-        ang_r = angle * np.pi / 180
-        x_c, y_c = self.center
-        rotated_pts = []
-        for pt in self.points:
-            x_new = x_c + np.cos(ang_r) * (pt[0] - x_c) - np.sin(ang_r) * (pt[1] - y_c)
-            y_new = y_c + np.sin(ang_r) * (pt[0] - x_c) + np.cos(ang_r) * (pt[1] - y_c)
-            rotated_pts.append([x_new, y_new])
-        self.points = rotated_pts
+            pt_accum.append([curr_x + x, curr_y + y])
+        self.points = pt_accum
 
     def draw(self):
-        """ Draws robot to screen """
+        """ Draws object to screen """
         pygame.draw.polygon(self.surface, "black", self.points)
         pygame.draw.circle(self.surface, "red", self.center, 3)
-        pygame.display.flip()
-
+    
     def drawBuffer(self):
+        """ Draws object to screen """
         pygame.draw.polygon(self.surface, "orange", self.points)
-        pygame.display.flip()
     
     def printLocation(self):
-        """ Prints robot information """
+        """ Prints object information """
         print("center: " + str(self.center))
         print("points: " + str(self.points))
 
@@ -89,9 +105,8 @@ class Robot():
         return self.points
     
     def reset(self):
-        self.points = self.inital_points
+        self.points = self.initial_points
         self.center = self.initial_center
-
 
 class Simulator():
     """ 
@@ -100,8 +115,8 @@ class Simulator():
     """
     def __init__(self, screen, w, l):
         self.screen = screen
-        self.start = [40, 100, 0]
-        self.end = [560, 400, 0]
+        self.start = [40, 100]
+        self.end = [560, 400]
         self.w = w
         self.l = l
 
@@ -110,7 +125,7 @@ class Simulator():
 
         NOTE: ALL POINTS MUST BE IN CCW ORDER FOR MINKOWSKI SUM TO WORK
         """
-        self.robot = Robot(self.start[0:2], \
+        self.object = Object(self.start, \
             [[30, 70], [20, 100], [30, 130], [50, 130], [60, 100], [50, 70]], screen)
         self.obstacles = [
             Obstacle([[300, 100], [300, 400], [400, 100]], screen),
@@ -122,7 +137,6 @@ class Simulator():
         self.adjacencyMatrix = []
         self.path = []
         self.shift = 10
-        self.angle = 5
 
         """ Pushing robots """
         self.pr_amount = None
@@ -133,6 +147,17 @@ class Simulator():
         """ Loads screen and handles traversing using predestined path """
         clock = pygame.time.Clock()
         self.screen.fill((255, 255, 255))
+        
+        # intiailize buffer robot for visualization
+        self.bufferObject = Object(self.object.getCenter().copy(),
+        self.buffer.copy(), self.screen)
+        self.bufferObject.drawBuffer()
+
+        # initialize pushing robots used 
+        self.robots = []
+        for i in range(self.pr_amount):
+            self.robots.append(Robot(self.pr_size, [40 * (i+1), self.l-50], self.screen))
+            self.robots[i].draw()
 
         self.draw_all()
         while 1:
@@ -145,37 +170,35 @@ class Simulator():
                     return
                 elif event.type == pygame.KEYDOWN:
                     # resets robot and traverses path 
-                    self.robot.reset()
+                    self.object.reset()
+                    self.bufferObject.reset()
                     self.traversePath()
 
             self.draw_all()
                     
     def draw_all(self):
-        """ Draws all obstacles, start/finish points, and robot """
+        """ Draws all obstacles, start/finish points and object """
         for obs in self.obstacles:
             obs.draw()
-        pygame.draw.circle(self.screen, "blue", self.start[0:2], 3)
-        pygame.draw.circle(self.screen, "blue", self.end[0:2], 3)
-        self.robot.draw()
+        pygame.draw.circle(self.screen, "blue", self.start, 3)
+        pygame.draw.circle(self.screen, "blue", self.end, 3)
+        self.object.draw()
+        pygame.display.update()
     
     def initialize_pushers(self, amount, size):
         self.pr_amount = amount
         self.pr_size = size
-
-    def create_graph(self, shift, angle):
+    
+    def create_graph(self, shift):
         """ 
-        Given a shift and angle to discretize by, will create a 3D "graph"
-        Graph is really just a 3D array that will be operated upon with BFS.
-        Each "layer" of this array represents a different angle for the robot
-        while the 2D arrays of each layer are a representation of the shifts
-        to each discretized point. 
+        Given a shift to discretize by, will create a 2D "graph" to use 
+        path finding operations on.
 
         Runtime Analysis:
 
         Define...
         cols (c) -> length / shift)
         rows (r) -> width / shift)
-        depth (d) -> 360 / angle
         n -> size of robot
         m -> size of all obstacles 
 
@@ -184,15 +207,13 @@ class Simulator():
                 -> minkowskiSum(): O(n + m)
                 -> inside_convex_polygon: O(n + m)
         
-        Total: O(d*c*r*(n+m)) which is optimal when discretizing 
+        Total: O(d*c*(n+m)) which is optimal when discretizing 
         """
 
         def addBufferZone(pts):
             """
-            TODO:
-            * modify Minkowski Sum function and implmenetation
-            * Implement add buffer zone (this might be tough)
-            
+            Adds a space equivalent to 3 pushing robots around the object
+            to allow space for them to move. Uses a minkowski sum!
             """
 
             # check that pushing robot parameters are specified 
@@ -260,9 +281,8 @@ class Simulator():
             for pt in robot.getPoints():
                 if pt[0] < 0 or pt[1] < 0 or pt[0] > self.w or pt[1] > self.l: 
                     return False
-
+            
             # use minkowski sum to check for intersecting polygons quickly!
-
             for obsObj in obstacles:
                 obs = obsObj.getPoints().copy()
                 for i in range(len(obs)):
@@ -273,81 +293,58 @@ class Simulator():
             
             # if made it out of loop, robot is in a valid location! return True
             return True
-
-            """
-            For a point robot, just use inside_convex_polygon() without
-            Minokwski Sum first...
-
-            checks if a point is in the obstacles
-            p = robot.getCenter()
-            for obs in obstacles:
-                if(inside_convex_polygon(p, obs.getPoints())):
-                    return False
-            return True
-
-            """
         
         # pre processing: make a new robot to move around 
-        robot_pts = self.robot.getPoints().copy()
-        robot_center = self.robot.getCenter().copy()
+        robot_pts = self.object.getPoints().copy()
+        robot_center = self.object.getCenter().copy()
 
         buff = addBufferZone(robot_pts)
-        robot = Robot(robot_center, buff, self.screen)
-
+        robot = Object(robot_center, buff, self.screen)
         # "zero" robot to look at every point
         robot.move(-(robot.getCenter()[0]), -(robot.getCenter()[1]))
 
         # initailze loop variables 
-        a = 0
         cols = math.ceil(self.l / shift)
         rows = math.ceil(self.w / shift)
-        depth = math.ceil(360 / angle)
         adjacencyMatrix = []
 
-        for k in range(depth):
-            # for each angle...
+        for c in range(cols):
+            # for each column...
             adjacencyMatrix.append([])
-            robot.rotate(angle)
-            for c in range(cols):
-                # for each column...
-                adjacencyMatrix[k].append([])
-                for r in range(rows):
-                    # for each robot ...
-                    if isValid(robot, self.obstacles):
-                        # if in valid location, add to graph marking it as unread (False)
-                        adjacencyMatrix[k][c].append([r * shift, c * shift, a, False])
-                    else:
-                        # if in valid location, add to graph marking it as read (True)
-                        adjacencyMatrix[k][c].append([r * shift, c * shift, a, True])
-                    robot.move(shift, 0)
-                robot.move(-(shift * rows), shift)
-            robot.move(0, -(shift * cols))
-            a+=angle
+            for r in range(rows):
+                # for each robot ...
+                if isValid(robot, self.obstacles):
+                    # if in valid location, add to graph marking it as unread (False)
+                    adjacencyMatrix[c].append([r * shift, c * shift, False])
+                else:
+                    # if in valid location, add to graph marking it as read (True)
+                    adjacencyMatrix[c].append([r * shift, c * shift, True])
+                robot.move(shift, 0)
+            robot.move(-(shift * rows), shift)
+        robot.move(0, -(shift * cols))
 
         # Save adjacency matrix and find path
         self.adjacencyMatrix = adjacencyMatrix
-        self.path = self.bfsPathFind(shift, angle)
+        self.path = self.bfsPathFind(shift)
 
-    def bfsPathFind(self, shift, angle):
+    def bfsPathFind(self, shift):
         """
         Finds a path using the graph (adjacencyMatrix) using a BFS approach.
-        Will find the shortest path (prioritizing rotation first). If no path
-        exists, will return -1.
+        If no path exists, will return -1
         
-        Runtime for path-find queries: O(r*c*d)
+        Runtime for path-find queries: O(c*d)
         """
         
         # create copy (as this array will be edited)
         adjacencyMatrix = self.adjacencyMatrix.copy()
         self.shift = shift
-        self.angle = angle
 
         # BFS preprocessing
         queue = []
         s = self.start.copy()
-        queue.append([[s[2]//angle, s[1]//shift, s[0]//shift]])
-        adjacencyMatrix[s[2]//angle][s[1]//shift][s[0]//shift][3] = True
-        dirs = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]]
+        queue.append([[s[1]//shift, s[0]//shift]])
+        adjacencyMatrix[s[1]//shift][s[0]//shift][2] = True
+        dirs = [[0, 1], [0, -1], [1, 0], [-1, 0]]
 
         # start loop using a queue
         while(queue):
@@ -355,101 +352,255 @@ class Simulator():
             path = queue.pop(0)
 
             # take the most recent location in path to check 
-            x_i, y_i, z_i = path[-1]
+            x_i, y_i = path[-1]
 
             # get the assocaited orientation at that location 
-            node_val = adjacencyMatrix[x_i][y_i][z_i]
-            x, y, z, v = node_val
+            node_val = adjacencyMatrix[x_i][y_i]
+            x, y, v = node_val
 
             # if we found the end, return the path 
-            if(node_val[0:3] == self.end):
+            if(node_val[0:2] == self.end):
                 return path
             
             # else search in 6 more directions (prioritizing angle)
-            for a, b, c in dirs:
+            for a, b in dirs:
                 # make sure next point is valid and UNREAD (valid)
-                if(z + a * angle >= 0 and z + a * angle < 360
-                and y + b * shift >= 0 and y + b * shift < self.l
-                and x + c * shift >= 0 and x + c * shift < self.w and not
-                adjacencyMatrix[x_i+a][y_i+b][z_i+c][3]):
+                if(y + b * shift >= 0 and y + b * shift < self.l
+                and x + a * shift >= 0 and x + a * shift < self.w and not
+                adjacencyMatrix[x_i+a][y_i+b][2]):
                     # mark as read
-                    adjacencyMatrix[x_i+a][y_i+b][z_i+c][3] = True
+                    adjacencyMatrix[x_i+a][y_i+b][2] = True
                     # add to path and append the new path to check
                     newpath = path.copy()
-                    newpath.append([x_i+a,y_i+b,z_i+c])
+                    newpath.append([x_i+a,y_i+b])
                     queue.append(newpath)
         # if path could not be found 
         return -1
 
     def traversePath(self):
         """
-        Traverses a path using self.path. Self.path holds the values, but
-        the robot along this path takes some work. 
+        Will traverse the path while simultaneously assigning tasks to the
+        robots to push the object along. Relies on the visibility graph, repositioning
+        path, and stabilzer to determine pathfinding and push points. 
         """
+
+        def updateMapping():
+            """ updates object, buffer, and robots on the screen """
+            self.screen.fill((255, 255, 255))
+            self.bufferObject.drawBuffer()        
+            for i in self.robots:
+                i.draw()
+            self.draw_all()
+
+        def constructRepositioningPath(p1, p2, M):
+            """
+            Will construct a repositioning path about M to connect p1
+            and p2. Useful for moving positions and push angle on the path. Takes
+            minkowski sum at halfway through the buffer zone to avoid collisions.
+
+            Takes O(m)-time where m is the number of points in M.
+            """
+
+
+            # minkowski sum 
+            path_endpoint_box = [[-self.pr_size*1.5, -self.pr_size*1.5],
+                [-self.pr_size*1.5, self.pr_size*1.5],
+                [self.pr_size*1.5, self.pr_size*1.5],
+                [self.pr_size*1.5, -self.pr_size*1.5]]
+
+            path_endpoints = self.minkowskiSum(M, path_endpoint_box)
+
+            # looking for connecting indicies along the path of Minkowski Sum
+            n = len(path_endpoints)
+            idx_p1 = 0
+            idx_p2 = 0
+            for i in range(n):
+                if(np.linalg.norm([p1[0] - path_endpoints[i][0],
+                p1[1] - path_endpoints[i][1]]) < \
+                np.linalg.norm([p1[0] - path_endpoints[idx_p1][0],
+                p1[1] - path_endpoints[idx_p1][1]])):
+                    idx_p1 = i
+                if(np.linalg.norm([p2[0] - path_endpoints[i][0],
+                p2[1] - path_endpoints[i][1]]) < \
+                np.linalg.norm([p2[0] - path_endpoints[idx_p2][0],
+                p2[1] - path_endpoints[idx_p2][1]])):
+                    idx_p2 = i
+
+            if(abs(idx_p1 - idx_p2) == 1 or \
+                # avoids long travelling 
+                ((idx_p1 + 1)%n == 0 and idx_p2 == 0) or
+                ((idx_p2 + 1)%n == 0 and idx_p1 == 0)):
+                path_lst = []
+            elif(idx_p1 < idx_p2):
+                path_lst = path_endpoints[idx_p1:(idx_p2+1)]
+            elif(idx_p1 > idx_p2):
+                path_lst = (path_endpoints[idx_p2:(idx_p1+1)])
+                path_lst.reverse()
+            else:
+                path_lst = []
+            
+            # connect the points with the path list 
+            path = [p1] + path_lst + [p2]
+            return path
+
+        def moveRobot(usingRobot, repo_path, n):
+            """
+            move the robot smoothly along the repositioning path. n determines
+            the number of iterations (higher n = more smooth)
+            """
+            for repo_pt in repo_path:
+                vec = [(repo_pt[0] - usingRobot.position[0])/n, (repo_pt[1] - usingRobot.position[1])/n]
+                for i in range(n):
+                    time.sleep(0.01)
+                    usingRobot.move(vec[0], vec[1], label)
+                    updateMapping()
+
+        def useVisibilityGraph(p1, p2):
+            """
+            Constructs a visibility graph and uses it to connect two points 
+            so robots will avoid collisions with obstacles over long distances.
+            
+            O(n^3) where n is the number of obstacles vertices 
+            (this can be implemented faster!)
+            """
+
+            # minkowski sum to allow space for the robot to move along 
+            # edges of obstacles without colliding
+            obs_box = [[-self.pr_size*0.5, -self.pr_size*0.5],
+                [-self.pr_size*0.5, self.pr_size*0.5],
+                [self.pr_size*0.5, self.pr_size*0.5],
+                [self.pr_size*0.5, -self.pr_size*0.5]]
+            
+            # graph 
+            nodes = {
+                tuple(p1): [],
+                tuple(p2): []
+            }
+
+            for obs in self.obstacles:
+                obs_endpoints = self.minkowskiSum(obs.getPoints().copy(), obs_box)
+                for ep in obs_endpoints:
+                    if ep[0] > 0 and ep[0] < self.w and \
+                    ep[1] > 0 and ep[1] < self.l:
+                        nodes[tuple(ep)] = []
+
+            # construct visbility graph 
+            for n1 in list(nodes.keys()):
+                for n2 in list(nodes.keys()):
+                    if(n1 == n2):
+                        continue
+
+                    inter = False
+                    for o in self.obstacles:
+                        obs = o.getPoints()
+                        for i in range(len(obs)):
+                            edge = [obs[i], obs[(i+1)%len(obs)]]
+                            if(intersection([n1, n2], edge) != -1):
+                                inter = True
+                    if not inter:
+                        if(n2 not in nodes[n1]):
+                            nodes[n1].append(n2)
+                        if(n1 not in nodes[n2]):
+                            nodes[n2].append(n1)
+
+            #bfs to determine a path and return it 
+            seen = [p1]
+            queue = [[p1]]
+            while(queue):
+                path = queue.pop(0)
+                if path[-1] == tuple(p2):
+                    return [p1] + path
+
+                for i in nodes[tuple(path[-1])]:
+                    if (i not in seen):
+                        seen.append(i)
+                        newpath = path.copy()
+                        newpath.append(i)
+                        queue.append(newpath)
+
+            return p1
+
+
         if(self.path == -1):
             print("No path found")
             return
 
-        # set start point to previous values 
-        x_p, y_p, a_p = self.start
-        bufferRobot = Robot(self.robot.getCenter().copy(),
-        self.buffer.copy(), self.screen)
-        curr_dir = None
+        # initialize stabilizer 
+        stablizer = Stablizer(self.pr_size, self.screen)
+
+        dangerousRobot = None
 
         path = self.path.copy()
-        path.pop(0) # clear first value
-        task = None
-        
-        while(path):
-            if(task != "reposition"):
-                x_i, y_i, z_i = path.pop(0)
+        path.pop(0)
 
-            print(x_i, y_i, z_i)
-            print(curr_dir)
-            time.sleep(self.shift*0.01)
-            x, y, a, v = self.adjacencyMatrix[x_i][y_i][z_i]
+        # follow the path
+        for x_i, y_i in path:
+            x, y, v = self.adjacencyMatrix[x_i][y_i]
 
-            # DETERMINE TASK
-            if(a != a_p):
-                task = "rotate"
-                print("rotate")
-                self.robot.rotate(a - a_p)
-                bufferRobot.rotate(a - a_p)
-                a_p = a
-            elif(x_p != x and curr_dir == "x"):
-                task = "push"
-                print("push")
-                self.robot.move(x - x_p, y - y_p)
-                bufferRobot.move(x - x_p, y - y_p)
-                x_p = x
-            elif(y_p != y and curr_dir == "y"):
-                task = "push"
-                print("push")
-                self.robot.move(x - x_p, y - y_p)
-                bufferRobot.move(x - x_p, y - y_p)
-                y_p = y
-            else:
-                task = "reposition"
-                print("reposition")
-                if(x_p != x):
-                    curr_dir = "x"
+            # find target push points (vectors) using the stabilizer 
+            stablizer_path = stablizer.restablize(self.object.getCenter().copy(),
+            self.object.getPoints().copy(), [x,y])
+
+            takenRobot = ""
+            displacement = [0, 0]
+            for pt, label, contactPoint, restPoint in stablizer_path:
+                # for each "move" on the stabilizer path 
+
+                # account for displacement from robot moving on target points 
+                contact = [contactPoint[0] + displacement[0], contactPoint[1] + displacement[1]]
+                rest = [restPoint[0] + displacement[0], restPoint[1] + displacement[1]]
+
+                # decide which robot to use based on distacne away from target point 
+                usingRobot = None
+                for robot in self.robots:
+                    if robot.label == label:
+                        usingRobot = robot
+                        break
+                    if (self.pr_amount == 1 or robot.label != takenRobot) and \
+                        (usingRobot == None or np.linalg.norm([robot.position[0] - contact[0], \
+                        robot.position[1] - contact[1]]) < \
+                        np.linalg.norm([usingRobot.position[0] - contact[0], \
+                        usingRobot.position[1] - contact[1]])):
+                        usingRobot = robot
+
+                # skip robot motion if no motion is done by robot in that turn 
+                if(abs(pt[0]) < 0.001 and abs(pt[1]) < 0.001):
+                    dangerousRobot = usingRobot
+                    continue
+                
+                # determine if "long distance" travel is necessary with visibility graph
+                # dangerousRobots are marked ahead of time 
+                takenRobot = label
+                if(usingRobot.label == None or usingRobot == dangerousRobot):
+                    path_to_robot = useVisibilityGraph(usingRobot.position, self.object.getCenter().copy())
+                    rest_of_path = constructRepositioningPath(path_to_robot[-2], contact, self.object.getPoints().copy())
+                    repo_path = path_to_robot[:-2] + rest_of_path
+                    dangerousRobot = None
                 else:
-                    curr_dir = "y"
+                    repo_path = constructRepositioningPath(usingRobot.position, contact, self.object.getPoints().copy())
+                
+                # follow repositioning path and push 
+                if(len(repo_path) > 3):
+                    n = 40
+                else:
+                    n = 4
+                moveRobot(usingRobot, repo_path, n)
 
-            # move robot along path and redraw all points
-            self.screen.fill((255, 255, 255))
+                self.object.move(pt[0], pt[1])
+                self.bufferObject.move(pt[0], pt[1])
 
-            # obstacles and polygons
-            bufferRobot.drawBuffer()
+                # account for displacement 
+                displacement[0] += pt[0]
+                displacement[1] += pt[1]
 
-            # construct repositioning path TODO: testing
-            self.constructRepositioningPath(1, 2, self.robot.getPoints().copy())
+                # reposition to get in resting position 
+                repo_path = constructRepositioningPath(usingRobot.position, rest, self.object.getPoints().copy())
+                moveRobot(usingRobot, repo_path, 10)
 
-            #TODO: TESTING STABLIZER
-            stablizer = Stablizer(self.robot.getCenter().copy(), self.robot.getPoints().copy(), \
-            self.buffer.copy(), [0,0], self.pr_size, self.screen)
-            
-            self.draw_all()
+            for robot in self.robots:
+                robot.label = None
+
+                
 
     def minkowskiSum(self, P, Q):
         """
@@ -499,121 +650,138 @@ class Simulator():
                 i+=1
 
         return ms
-
-    def constructRepositioningPath(self, p1, p2, M):
-
-        path_endpoint_box = [[-self.pr_size*1.5, -self.pr_size*1.5],
-            [-self.pr_size*1.5, self.pr_size*1.5],
-            [self.pr_size*1.5, self.pr_size*1.5],
-            [self.pr_size*1.5, -self.pr_size*1.5]]
-
-        path_endpoints = self.minkowskiSum(M, path_endpoint_box)
-
-        n = len(path_endpoints)
-        for i in range(n):
-            pygame.draw.line(self.screen, "blue", \
-                path_endpoints[i], path_endpoints[(i+1)%n], 1)
-
+            
 
 class Stablizer():
-        def __init__(self, C, M, M_p, N, pr_size, screen):
-            # won't change
-            self.surface = screen
-            self.pr_size = pr_size
+    """
+    Determines the points on M for the robot to push as well as 
+    the force (vector) to push with. Very similar to the report referenced
+    in my write up.
+    """
 
-            # intially stabilize to instatiate variables
-            self.restablize(C, M, M_p, N)
+    def __init__(self, pr_size, screen):
+        self.surface = screen
+        self.pr_size = pr_size
 
-        def restablize(self, C, M, M_p, N):
-            def line(p1, p2):
-                A = (p1[1] - p2[1])
-                B = (p2[0] - p1[0])
-                C = (p1[0]*p2[1] - p2[0]*p1[1])
-                return A, B, -C
+    def restablize(self, C, M, N):
+        def find_edge_target_point(edge, C):
+            """
+            Trig to find the target balance and rest point on a given edge 
+            """
+            dir_perp_edge = [-(edge[1][1] - edge[0][1]), (edge[1][0] - edge[0][0])]
+            perp_edge_norm = np.linalg.norm(dir_perp_edge)
+            perp_edge = [C, [C[0] + dir_perp_edge[0] * 2 * self.S_r / perp_edge_norm, \
+                C[1] + dir_perp_edge[1] * 2 * self.S_r / perp_edge_norm]]
+            intersection_pt = intersection(edge, perp_edge)
 
-            """ https://stackoverflow.com/questions/3838329/how-can-i-check-if-two-segments-intersect """
-            def intersection(LS1, LS2):
-                if(not LineString(LS1).intersects(LineString(LS2))):
-                    return -1
-                L1 = line(LS1[0], LS1[1])
-                L2 = line(LS2[0], LS2[1])
-                D  = L1[0] * L2[1] - L1[1] * L2[0]
-                Dx = L1[2] * L2[1] - L1[1] * L2[2]
-                Dy = L1[0] * L2[2] - L1[2] * L2[0]
-                if D != 0:
-                    x = Dx / D
-                    y = Dy / D
-                    return x,y
-                else:
-                    return -1
+            # find associated target rest point
+            rest_pt = [intersection_pt[0] + dir_perp_edge[0] * 2.5 * self.pr_size / perp_edge_norm, \
+                intersection_pt[1] + dir_perp_edge[1] * 2.5 * self.pr_size / perp_edge_norm]
 
-            def find_edge_target_point(edge, C):
-                dir_perp_edge = [-(edge[1][1] - edge[0][1]), (edge[1][0] - edge[0][0])]
-                perp_edge_norm = np.linalg.norm(dir_perp_edge)
-                perp_edge = [C, [C[0] + dir_perp_edge[0] * 2 * self.S_r / perp_edge_norm, \
-                    C[1] + dir_perp_edge[1] * 2 * self.S_r / perp_edge_norm]]
-                intersection_pt = intersection(edge, perp_edge)
+            return edge, intersection_pt, rest_pt
 
-                # find associated target rest point
-                rest_pt = [intersection_pt[0] + dir_perp_edge[0] * 2.5 * self.pr_size / perp_edge_norm, \
-                    intersection_pt[1] + dir_perp_edge[1] * 2.5 * self.pr_size / perp_edge_norm]
+        S_r = 0
+        for pt in M:
+            self.S_r = S_r = max(S_r, math.sqrt((C[0]-pt[0])**2 + (C[1]-pt[1])**2))
+        dir_L2 = [C[0] - N[0], C[1] - N[1]]
+        # extend L2 by 2 * S_r to ensure rays go through boundary of M
+        L2_norm = np.linalg.norm(dir_L2)
+        L2 = [dir_L2[0] * 2 * S_r / L2_norm, dir_L2[1] * 2 * S_r / L2_norm]
 
-                return edge, intersection_pt, rest_pt
+        L2 = self.L2 = [C, [C[0] + L2[0], C[1] + L2[1]]]
 
-            S_r = 0
-            for pt in M:
-                self.S_r = S_r = max(S_r, math.sqrt((C[0]-pt[0])**2 + (C[1]-pt[1])**2))
-            dir_L2 = [C[0] - N[0], C[1] - N[1]]
-            # extend L2 by 2 * S_r to ensure rays go through boundary of M
-            L2_norm = np.linalg.norm(dir_L2)
-            L2 = [dir_L2[0] * 2 * S_r / L2_norm, dir_L2[1] * 2 * S_r / L2_norm]
+        for i in range(len(M)):
+            edge = [M[i], M[(i+1)%len(M)]]
+            if(intersection(L2, edge) != -1):
+                e2, pu, pr = find_edge_target_point(edge, C)
+                self.e2 = e2
+                self.pu = pu
+                self.pr = pr
+                e1, la, lar = find_edge_target_point([M[(i-1)%len(M)], M[(i)%len(M)]], C)
+                self.e1 = e1
+                self.la = la
+                self.lar = lar
+                e3, ra, rar = find_edge_target_point([M[(i+1)%len(M)], M[(i+2)%len(M)]], C)
+                self.e3 = e3
+                self.ra = ra
+                self.rar = rar
 
-            dir_L3 = [-dir_L2[1], dir_L2[0]]
-            L3_norm = np.linalg.norm(dir_L3)
-            L3 = [dir_L3[0] * 2 * S_r / L3_norm, dir_L3[1] * 2 * S_r / L3_norm]
 
-            # convert to rays centered at C
-            L1 = self.L1 = [C, [C[0] - L2[0], C[1] - L2[1]]]
-            L2 = self.L2 = [C, [C[0] + L2[0], C[1] + L2[1]]]
-            L4 = self.L4 = [C, [C[0] - L3[0], C[1] - L3[1]]]
-            L3 = self.L3 = [C, [C[0] + L3[0], C[1] + L3[1]]]
+        side = np.sign((N[0] - C[0]) * (-pu[1] - C[1]) - (N[1] - C[1]) * (-pu[0] - C[0]))
+        # -1: left, 0: on, 1: right
 
-            # pygame.draw.line(self.surface, "green", \
-            #     L2[0], L2[1], 1)
+        v1 = [C[0]-pu[0], C[1]-pu[1]]
+        v1_norm = np.linalg.norm(v1)
+        v1_unit = [v1[0] / v1_norm, v1[1] / v1_norm]
 
-            for i in range(len(M)):
-                edge = [M[i], M[(i+1)%len(M)]]
-                if(intersection(L2, edge) != -1):
-                    e2, pu, pr = find_edge_target_point(edge, C)
-                    self.e2 = e2
-                    self.pu = pu
-                    self.pr = pr
-                if(intersection(L3, edge) != -1):
-                    e3, la, lar = find_edge_target_point(edge, C)
-                    self.e3 = e3
-                    self.la = la
-                    self.lar = lar
+        if(side == -1):
+            v2 = [C[0]-la[0], C[1]-la[1]]
+            assist = "la"
+            contactPt = la
+            restPt = lar
+        elif(side == 1):
+            v2 = [C[0]-ra[0], C[1]-ra[1]]
+            assist = "ra"
+            contactPt = ra
+            restPt = rar
+        else:
+            v2 = [0, 0]
+            assist = None
+            contactPt = None
 
-                    # TODO: FIX THESE: POTENTIALLY NOT CORRECT
-                    r0 = self.r0 = e3[0]
-                    l0 = self.l0 = e3[1]
-                if(intersection(L4, edge) != -1):
-                    e4, ra, rar = find_edge_target_point(edge, C)
-                    self.e4 = e4
-                    self.ra = ra
-                    self.rar = rar
+        v2_norm = np.linalg.norm(v2)
+        v2_unit = [v2[0] / v2_norm, v2[1] / v2_norm]
+
+        v3 = [N[0] - C[0], N[1] - C[1]]
+        robot_steps = np.linalg.solve([[v1_unit[0], v2_unit[0]], [v1_unit[1], v2_unit[1]]], v3)
+
+        if(robot_steps[0] < 0.001):
+            robot_steps[0] = 0
+        if(robot_steps[1] < 0.001):
+            robot_steps[1] = 0
+
+        step_list = []
+        n = 2 # TODO: HIGHER N = MORE ACCURATE BUT LONGER (more practical, probably)
+        v1_step = [robot_steps[0] * v1_unit[0] / n, robot_steps[0] * v1_unit[1] / n]
+        v2_step = [robot_steps[1] * v2_unit[0] / n, robot_steps[1] * v2_unit[1] / n]
+        for i in range(n):
+            step_list.append([v1_step, "pu", pu, pr])
+            step_list.append([v2_step, assist, contactPt, restPt])
+
+        return step_list
+
+
+
+class Robot():
+    """
+    Robot class. Defined by a position and label which tells the robot 
+    which instructions of the stabilzer to listen to.
+    """
+    def __init__(self, size, p, surface):
+        self.size = size
+        self.position = p
+        self.surface = surface
+        self.label = None
+
+    def move(self, dx, dy, label):
+        self.position[0] += dx
+        self.position[1] += dy
+        self.label = label
+
+    def draw(self):
+        pygame.draw.circle(self.surface, "blue", self.position, self.size / 2)
+
                 
-            #TODO: ADD ROTATION TARGET REST / BALANCE POINTS HERE
-
 def main():
     # initiate simulator and run it 
     pygame.init()
     pygame.display.set_caption("Robot Simulation Part 2")
     screen = pygame.display.set_mode((640, 480)) #width, length
     simulation = Simulator(screen, 640, 480) #width, length
-    simulation.initialize_pushers(3, 6) #amount, size (diameter)
+    simulation.initialize_pushers(2, 6) #amount, size (diameter)
     print("Loading Path...")
-    simulation.create_graph(10, 5) #shift, angle
+    simulation.create_graph(10) #shift
     print("Path loaded.")
     simulation.main()
+
 main()
