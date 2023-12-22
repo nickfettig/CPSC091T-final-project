@@ -7,8 +7,6 @@ Fall 2023
 Final Project:
 Rigorous Movement of Convex Polygons on a Path Using Multiple Robots Simulation
 
-DESCRIPTION
-
 pip libs:
 pygame, numpy
 
@@ -422,7 +420,7 @@ def main():
     screen = pygame.display.set_mode((640, 480)) #width, length
     simulation = Simulator(screen, 640, 480) #width, length
     print("Loading Path...")
-    simulation.create_graph(10, 5) #shift, angle
+    simulation.create_graph(5, 3) #shift, angle
     print("Path loaded.")
     simulation.main()
 main()

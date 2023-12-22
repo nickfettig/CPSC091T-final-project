@@ -7,8 +7,6 @@ Fall 2023
 Final Project:
 Rigorous Movement of Convex Polygons on a Path Using Multiple Robots Simulation
 
-DESCRIPTION
-
 pip libs:
 pygame, numpy, shapely
 """
